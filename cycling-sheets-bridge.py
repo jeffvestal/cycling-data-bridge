@@ -28,7 +28,7 @@ def getSheet():
     sh = gc.open('Cycling Clothes for Weather').sheet1
     l = sh.get_all_records()
     
-    convertedSheet = {}
+    convertedSheet = []
     for row in l:
         # Replace chars that would make ES a little less fun
         rowLower = {}
@@ -46,15 +46,16 @@ def getSheet():
 
             rowLower[k] = v
 
-        # Create a new field "startDateTime" based on "date" and "start_time" fields
-        rideSDT = '%s %s' % (rowLower['date'], rowLower['start_time'])
-        rideSDT = central.localize(datetime.strptime(rideSDT, '%m/%d/%Y %I:%M:%S %p'))
-        # Convert to UTC
-        utcSDT = datetime.utcfromtimestamp(rideSDT.timestamp())
-        rowLower['startDateTime'] = utcSDT
+        ## Create a new field "startDateTime" based on "date" and "start_time" fields
+        #rideSDT = '%s %s' % (rowLower['date'], rowLower['start_time'])
+        #rideSDT = central.localize(datetime.strptime(rideSDT, '%m/%d/%Y %I:%M:%S %p'))
+        ## Convert to UTC
+        #utcSDT = datetime.utcfromtimestamp(rideSDT.timestamp())
+        #rowLower['startDateTime'] = utcSDT
 
         # 'timestamp' is the column name created by the Google form automatically generated when the form is submitted / entered into Sheets
-        convertedSheet[rowLower['timestamp']] = rowLower
+       # convertedSheet[rowLower['timestamp']] = rowLower
+        convertedSheet.append(rowLower)
 
 
 #    pprint(convertedSheet)
@@ -64,58 +65,62 @@ def getSheet():
 def getStravaToken(client_id, client_secret, access_code=False):
     # need to have valid access_code from oAuth
     
-   url = 'https://www.strava.com/oauth/token',
-   payload = {
-       'client_id': client_id,
-       'client_secret': client_secret
-    }
-
-   if access_code:
-      '''
-        You have to manually (for now) call oAuth to get the access token
-        http://www.strava.com/oauth/authorize?client_id=<client_id>&response_type=code&redirect_uri=http://localhost/exchange_token&approval_prompt=force&scope=profile:read_all,activity:read_all
-    '''
-       #assume we need to pull a new initial token
-      payload['code'] = access_code
-      payload['grant_type'] = 'authorization_code'
-
-      response = requests.post(
-          url = url,
-          data = payload
-      )
-
-   #    # store token data
-   #    strava_tokens = response.json()
-   #    with open('.strava_tokens.json', 'w') as outfile:
-   #        json.dump(strava_tokens, outfile)
-
-   else:
-       try:
-           with open('strava_tokens.json') as file:
-               tokenData = json.load(file)
-       except Exception as e:
-           print(e)
-   
-       payload['refresh_token'] = tokenData['refresh_token']
-       payload['grant_type'] = 'refresh_token'
-
+    url = 'https://www.strava.com/oauth/token'
+    payload = {
+        'client_id': client_id,
+        'client_secret': client_secret
+     }
+ 
+    if access_code:
+       '''
+         You have to manually (for now) call oAuth to get the access token
+         http://www.strava.com/oauth/authorize?client_id=<client_id>&response_type=code&redirect_uri=http://localhost/exchange_token&approval_prompt=force&scope=profile:read_all,activity:read_all
+     '''
+        #assume we need to pull a new initial token
+       payload['code'] = access_code
+       payload['grant_type'] = 'authorization_code'
+ 
        response = requests.post(
            url = url,
            data = payload
        )
+ 
+    #    # store token data
+    #    strava_tokens = response.json()
+    #    with open('.strava_tokens.json', 'w') as outfile:
+    #        json.dump(strava_tokens, outfile)
+ 
+    else:
+        try:
+            with open('strava_tokens.json') as file:
+                tokenData = json.load(file)
+        except Exception as e:
+            print(e)
+    
+        payload['refresh_token'] = tokenData['refresh_token']
+        payload['grant_type'] = 'refresh_token'
+ 
+        print(payload)
+        response = requests.post(
+            url = url,
+            data = payload
+        )
+ 
+    # store token data
+    strava_tokens = response.json()
+    with open('.strava_tokens.json', 'w') as outfile:
+        json.dump(strava_tokens, outfile)
 
-   # store token data
-   strava_tokens = response.json()
-   with open('.strava_tokens.json', 'w') as outfile:
-       json.dump(strava_tokens, outfile)
-
-
-   # TODO check for 200
+    return strava_tokens['access_token']
+ 
+ 
+    # TODO check for 200
 
 
 def pullStrava(token, rides):
     '''pull ride info from strava'''
 
+    updatedRides =[]
     stravaFields = [
         'average_speed', 
         'average_watts',
@@ -139,19 +144,30 @@ def pullStrava(token, rides):
     client = StravaIO(access_token=token)
     
     for ride in rides:
+        print()
+        print()
+        print(ride)
         rideID = ride['strava_link'].split('/')[-1]
+        print()
+        print(token)
+        print(rideID)
         activity = client.get_activity_by_id(rideID)
         activity_dict = activity.to_dict()
 
         for sf in stravaFields:
-            rides['ride']['strava'] = dict( ((sf, activity_dict[sf] ) for sf in stravaFields) )
-
-    return rides
+            print(activity_dict)
+            #rides[ride]['strava'] = dict( ((sf, activity_dict[sf] ) for sf in stravaFields) )
+            ride['strava'] = dict( ((sf, activity_dict[sf] ) for sf in stravaFields) )
+        
+        updatedRides.append(ride)
+            
+    return updatedRides
 
 
 def addWeather(apiKey, rides):
     '''Add weather from OpenWeather (API allows for last 5 days)'''
-
+    print('starting addWeather')
+    pprint(rides)
     
     for ride in rides:
         dt = ride['dt'] #check the key name
@@ -170,7 +186,7 @@ def esGetExisting(esConn, index):
     return existing
 
 
-def esInsert(indexName, sheet):
+def esInsert(indexName, newRides):
     '''Insert new rides to ES'''
     
 #    # RIght not I'm just deleting the index and reindexing the sheet.
@@ -182,7 +198,8 @@ def esInsert(indexName, sheet):
     print('Indexing rows to index: %s' % indexName)
     for k,v in sheet.items():
         print(body)
-#        res = es.index(index=indexName, body=v)
+    for ride in newRides:
+        res = es.index(index=indexName, body=ride)
 
 def esConnect(cid, user, passwd):
     '''Connect to Elastic Cloud cluster'''
@@ -190,13 +207,20 @@ def esConnect(cid, user, passwd):
     es = Elasticsearch(cloud_id=cid, http_auth=(user, passwd))
     return es
 
+def dropExisting(existing, rides):
+    #TODO delete existing docs from sheet
+    # use strava.start_date
+
+    return rides
+
 if __name__ == '__main__':
     
     # Set variables
     es_id = os.getenv('es_id')
     es_user = os.getenv('es_user')
     es_pass = os.getenv('es_pass')
-    indexName = 'cycling-report'
+    #indexName = 'cycling-report'
+    indexName = 'test_cycling-report'
 
     # OpenWeather info
     apiKey = os.getenv('apiKey')
@@ -217,11 +241,14 @@ if __name__ == '__main__':
     # get existing rides (docs)
     existing = esGetExisting(es, indexName)
 
+    # drop existing rides
+    newRides = dropExisting(existing, sheet)
+
     # get strava token
     token = getStravaToken(strava_client, strava_secret, access_code=False)
 
     # pull strava data for ride
-    stravaAdded = pullStrava(token, existing)
+    stravaAdded = pullStrava(token, newRides)
 
     # add All the Weather!
     processedRides = addWeather(apiKey, lat, long, stravaAdded)
