@@ -27,6 +27,9 @@ def getSheet():
     # Open and load spreadsheet
     sh = gc.open('Cycling Clothes for Weather').sheet1
     l = sh.get_all_records()
+
+    ## TEMP FOR TESTING
+    #l = l[:2]
     
     convertedSheet = []
     for row in l:
@@ -100,7 +103,7 @@ def getStravaToken(client_id, client_secret, access_code=False):
         payload['refresh_token'] = tokenData['refresh_token']
         payload['grant_type'] = 'refresh_token'
  
-        print(payload)
+        #print(payload)
         response = requests.post(
             url = url,
             data = payload
@@ -144,18 +147,13 @@ def pullStrava(token, rides):
     client = StravaIO(access_token=token)
     
     for ride in rides:
-        print()
-        print()
-        print(ride)
+        #print(ride)
         rideID = ride['strava_link'].split('/')[-1]
-        print()
-        print(token)
-        print(rideID)
         activity = client.get_activity_by_id(rideID)
         activity_dict = activity.to_dict()
 
         for sf in stravaFields:
-            print(activity_dict)
+            #print(activity_dict)
             #rides[ride]['strava'] = dict( ((sf, activity_dict[sf] ) for sf in stravaFields) )
             ride['strava'] = dict( ((sf, activity_dict[sf] ) for sf in stravaFields) )
         
@@ -167,15 +165,37 @@ def pullStrava(token, rides):
 def addWeather(apiKey, rides):
     '''Add weather from OpenWeather (API allows for last 5 days)'''
     print('starting addWeather')
-    pprint(rides)
+    #pprint(rides)
     
+    weatherRides = []
     for ride in rides:
-        dt = ride['dt'] #check the key name
-    oneCall = 'http://api.openweathermap.org/data/2.5/onecall/timemachine?lat=%s&lon=%s&units=imperial&dt=%s&appid=%s' % (lat, long, dt, apiKey)
+        # 'start_latlng': [42.058653, -87.708136],
 
-    response = requests.get(oneCall)
-    weather = json.loads(response.text)
+        lat, long = ride['strava']['start_latlng']
 
+        dtStart = datetime.strptime(ride['strava']['start_date'], '%Y-%m-%dT%H:%M:%SZ')
+        dt = int(dtStart.timestamp())
+        dtStartHour = int(dtStart.replace(microsecond=0, second=0, minute=0).timestamp())
+        hoursSpan = int(ride['strava']['elapsed_time']/60/60) + 1 # lazy way to ensure we get weather for the span of hours ride went across
+
+        oneCall = 'http://api.openweathermap.org/data/2.5/onecall/timemachine?lat=%s&lon=%s&units=imperial&dt=%s&appid=%s' % (lat, long, dt, apiKey)
+        print(oneCall)
+
+        response = requests.get(oneCall)
+        weather = json.loads(response.text)
+        print()
+        print(weather)
+        print()
+        try:
+            weatherSpans = weather['hourly'][dtStart.hour:dtStart.hour+hoursSpan]
+            weatherStart = weatherSpans[0]
+
+            ride['weather'] = {'weatherSpans' : weatherSpans, 'weatherStart' : weatherStart}
+        except KeyError:
+            ride['weather'] = {'missingReason' : weather}
+        weatherRides.append(ride)
+
+    return weatherRides
 
 
 def esGetExisting(esConn, index):
@@ -188,17 +208,12 @@ def esGetExisting(esConn, index):
 
 def esInsert(indexName, newRides):
     '''Insert new rides to ES'''
-    
-#    # RIght not I'm just deleting the index and reindexing the sheet.
-#    # maybe at some point just index the new rows
-#    print('Deleting existing index %s' % indexName)
-#    es.indices.delete(index=indexName)
+    print('Inserting Rides into ES')
 
     # TODO convert to bulk client at some point
     print('Indexing rows to index: %s' % indexName)
-    for k,v in sheet.items():
-        print(body)
     for ride in newRides:
+        print(ride)
         res = es.index(index=indexName, body=ride)
 
 def esConnect(cid, user, passwd):
@@ -251,7 +266,7 @@ if __name__ == '__main__':
     stravaAdded = pullStrava(token, newRides)
 
     # add All the Weather!
-    processedRides = addWeather(apiKey, lat, long, stravaAdded)
+    processedRides = addWeather(apiKey, stravaAdded)
 
     # sent new rides to ESS
     esInsert(indexName, processedRides)
