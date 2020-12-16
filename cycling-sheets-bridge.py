@@ -95,7 +95,7 @@ def getStravaToken(client_id, client_secret, access_code=False):
  
     else:
         try:
-            with open('strava_tokens.json') as file:
+            with open('.strava_tokens.json') as file:
                 tokenData = json.load(file)
         except Exception as e:
             print(e)
@@ -153,9 +153,10 @@ def pullStrava(token, rides):
         activity_dict = activity.to_dict()
 
         for sf in stravaFields:
-            #print(activity_dict)
-            #rides[ride]['strava'] = dict( ((sf, activity_dict[sf] ) for sf in stravaFields) )
+            # store select fields from Strava
+            # create geopoint field from start_latlng
             ride['strava'] = dict( ((sf, activity_dict[sf] ) for sf in stravaFields) )
+            ride['location'] = ride['strava']['start_date_local']
         
         updatedRides.append(ride)
             
@@ -164,8 +165,8 @@ def pullStrava(token, rides):
 
 def addWeather(apiKey, rides):
     '''Add weather from OpenWeather (API allows for last 5 days)'''
+
     print('starting addWeather')
-    #pprint(rides)
     
     weatherRides = []
     for ride in rides:
@@ -187,10 +188,16 @@ def addWeather(apiKey, rides):
         print(weather)
         print()
         try:
-            weatherSpans = weather['hourly'][dtStart.hour:dtStart.hour+hoursSpan]
+            weatherSpans = weather['hourly'][dtStart.hour : dtStart.hour + hoursSpan + 1]
             weatherStart = weatherSpans[0]
 
-            ride['weather'] = {'weatherSpans' : weatherSpans, 'weatherStart' : weatherStart}
+            ride['weather'] = {
+                                'weatherSpans' : weatherSpans, 
+                                'weatherStart' : weatherStart,
+                                'location' : {'lat' : weather['lat'], 'lon' : weather['lon'] },
+                                'timezone' : weather['timezone'],
+                                'timezone_offset' : weather['timezone_offset']
+                              }
         except KeyError:
             ride['weather'] = {'missingReason' : weather}
         weatherRides.append(ride)
