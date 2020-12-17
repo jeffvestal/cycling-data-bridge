@@ -3,27 +3,24 @@ import sys
 import gspread
 import requests
 import json
+import logging
 from stravaio import StravaIO
-from pprint import pprint
 from datetime import datetime
-from pytz import timezone
 from elasticsearch import Elasticsearch
 
+__version__ = 0.9
 
 def getSheet():
     '''Pull ride entries from google sheet'''
-    print('Starting gSheet pull')
-
-    # Set timezone
-    central = timezone('US/Central')
+    logging.info('Starting to pull from google sheets')
 
     # "checkbox" fields should be converted to an array for ingesting in ES
     checkboxToArray = ['during_ride_food', 'gloves', 'go_powder', 'headneck_cover', 'jacket', 'legs', 'pre-ride_food', 'shirts', 'shoe_extra', 'socks']
     
 
     # Connect to google
-    print('Connecting to gSheet Service')
     gc = gspread.service_account()
+    logging.info('connected to google api')
     
     # Open and load spreadsheet
     sh = gc.open('Cycling Clothes for Weather').sheet1
@@ -49,11 +46,14 @@ def getSheet():
 
         convertedSheet.append(rowLower)
 
+    logging.info('Finished pulling from google sheet')
     return convertedSheet
 
 
 def getStravaToken(client_id, client_secret, access_code=False):
     # need to have valid access_code from oAuth
+
+    logging.info('Starting to get Strava Token')
     
     url = 'https://www.strava.com/oauth/token'
     payload = {
@@ -85,12 +85,11 @@ def getStravaToken(client_id, client_secret, access_code=False):
             with open('.strava_tokens.json') as file:
                 tokenData = json.load(file)
         except Exception as e:
-            print(e)
+            logging.info(e)
     
         payload['refresh_token'] = tokenData['refresh_token']
         payload['grant_type'] = 'refresh_token'
  
-        #print(payload)
         response = requests.post(
             url = url,
             data = payload
@@ -101,6 +100,7 @@ def getStravaToken(client_id, client_secret, access_code=False):
     with open('.strava_tokens.json', 'w') as outfile:
         json.dump(strava_tokens, outfile)
 
+    logging.info('Finished getting Strava token')
     return strava_tokens['access_token']
  
  
@@ -109,6 +109,8 @@ def getStravaToken(client_id, client_secret, access_code=False):
 
 def pullStrava(token, rides):
     '''pull ride info from strava'''
+
+    logging.info('Starting to pull ride info from Strava')
 
     updatedRides =[]
     stravaFields = [
@@ -147,13 +149,14 @@ def pullStrava(token, rides):
         
         updatedRides.append(ride)
             
+    logging.info('Finsihed pulling rides from Strava')
     return updatedRides
 
 
 def addWeather(apiKey, rides):
     '''Add weather from OpenWeather (API allows for last 5 days)'''
 
-    print('starting addWeather')
+    logging.info('Starting to pull weather info')
     
     weatherRides = []
     for ride in rides:
@@ -161,11 +164,10 @@ def addWeather(apiKey, rides):
 
         dtStart = datetime.strptime(ride['strava']['start_date'], '%Y-%m-%dT%H:%M:%SZ')
         dt = int(dtStart.timestamp())
-        dtStartHour = int(dtStart.replace(microsecond=0, second=0, minute=0).timestamp())
         hoursSpan = int(ride['strava']['elapsed_time']/60/60) + 1 # lazy way to ensure we get weather for the span of hours ride went across
 
         oneCall = 'http://api.openweathermap.org/data/2.5/onecall/timemachine?lat=%s&lon=%s&units=imperial&dt=%s&appid=%s' % (lat, long, dt, apiKey)
-        print(oneCall)
+        logging.info('Calling wather for %s' % oneCall)
 
         response = requests.get(oneCall)
         weather = json.loads(response.text)
@@ -184,13 +186,14 @@ def addWeather(apiKey, rides):
             ride['weather'] = {'missingReason' : weather}
         weatherRides.append(ride)
 
+    logging.info('Finished pulling weather info')
     return weatherRides
 
 
 def esGetExisting(esConn, index):
     '''Get existing rides in ES'''
 
-    print('starting esGetExisting')
+    logging.info('Starting to get list of existing rides in ES')
 
     search = {"size":10000,"query":{"match_all":{}},"fields":["strava_link","timestamp"],"_source":False}
     rides = es.search(index=index, body=search)
@@ -200,42 +203,54 @@ def esGetExisting(esConn, index):
         existing['ts'].append(row['fields']['timestamp'][0])
         existing['sl'].append(row['fields']['strava_link'][0])
 
+    logging.info('Finished getting existing rides from ES')
     return existing
 
 
 def esInsert(indexName, newRides):
     '''Insert new rides to ES'''
-    print('Inserting Rides into ES')
 
+    logging.info('Starting to insert new rides to ES')
     # TODO convert to bulk client at some point
-    print('Indexing rows to index: %s' % indexName)
+    logging.info('Indexing rows to index: %s' % indexName)
     for ride in newRides:
-#        print(ride)
         res = es.index(index=indexName, body=ride)
+        logging.info(res)
+
+    logging.info('Finished inserting rides to ES')
 
 def esConnect(cid, user, passwd):
     '''Connect to Elastic Cloud cluster'''
 
+    logging.info('Starting to create ES Connection')
     es = Elasticsearch(cloud_id=cid, http_auth=(user, passwd))
+
+    logging.info('Finished creating ES Connection')
     return es
 
 def dropExisting(existing, rides):
+    '''We only want to work with and insert new rides to ES'''
+
+    logging.info('Starting to drop existing rides from google sheet')
 
     new = []
     for ride in rides:
         if ride['strava_link'] not in existing['sl']:
-            print('new ride found: %s' % ride['strava_link'])
+            logging.info('New ride found: %s' % ride['strava_link'])
             new.append(ride)
         
     if not new:
-        print ('no new strava rides found. Exiting')
+        logging.info('No new strava rides found in google sheet')
+        logging.info('Exiting')
         sys.exit()
+
+    logging.info('Finished dropping existing rides')
     return rides
 
 def createMeta(rides):
     ''' use data from weather but fall back to manual input for other data'''
 
-    print('starting createMeta')
+    logging.info('Starting to create meta weather fields')
     weatherFallback = ( ('temp', 'starting_temp'), ('feels_like', 'real_feel'), ('wind_speed', 'wind_speed') )
     compiledRides = []
 
@@ -252,11 +267,15 @@ def createMeta(rides):
         ride['meta'] = meta
         compiledRides.append(ride)
 
+    logging.info('Finished creating meta weather fields')
     return compiledRides
 
 
 if __name__ == '__main__':
     
+    logging.basicConfig(format='%(asctime)s:%(levelname)s:%(module)s:%(funcName)s:%(lineno)d:%(message)s', level=logging.INFO)
+    logging.info('Starting up')
+
     # ES info
     es_id = os.getenv('es_id')
     es_user = os.getenv('es_user')
@@ -299,22 +318,5 @@ if __name__ == '__main__':
     esInsert(indexName, processedRides)
 
 
-'''
-- get rows from gsheet
-- format data
-- get "key" of ride from ES
-- drop rows for existing rides
-- get ride info from strava
-- get weather for new (remaining rides)
-- upload to ES
 
-TODO
-- pull location from Strava and get lat,long?
-- add ability to update rides from sheet (or just make the update delete form ESS, but then missing some data)
-- 
-'''
-
-
-
-
-# vim: expandtab tabstop=4
+#vim: expandtab tabstop=4
