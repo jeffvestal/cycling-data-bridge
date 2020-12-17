@@ -1,4 +1,5 @@
 import os
+import sys
 import gspread
 import requests
 import json
@@ -28,9 +29,6 @@ def getSheet():
     sh = gc.open('Cycling Clothes for Weather').sheet1
     l = sh.get_all_records()
 
-    ## TEMP FOR TESTING
-    #l = l[:2]
-    
     convertedSheet = []
     for row in l:
         # Replace chars that would make ES a little less fun
@@ -49,19 +47,8 @@ def getSheet():
 
             rowLower[k] = v
 
-        ## Create a new field "startDateTime" based on "date" and "start_time" fields
-        #rideSDT = '%s %s' % (rowLower['date'], rowLower['start_time'])
-        #rideSDT = central.localize(datetime.strptime(rideSDT, '%m/%d/%Y %I:%M:%S %p'))
-        ## Convert to UTC
-        #utcSDT = datetime.utcfromtimestamp(rideSDT.timestamp())
-        #rowLower['startDateTime'] = utcSDT
-
-        # 'timestamp' is the column name created by the Google form automatically generated when the form is submitted / entered into Sheets
-       # convertedSheet[rowLower['timestamp']] = rowLower
         convertedSheet.append(rowLower)
 
-
-#    pprint(convertedSheet)
     return convertedSheet
 
 
@@ -147,7 +134,6 @@ def pullStrava(token, rides):
     client = StravaIO(access_token=token)
     
     for ride in rides:
-        #print(ride)
         rideID = ride['strava_link'].split('/')[-1]
         activity = client.get_activity_by_id(rideID)
         activity_dict = activity.to_dict()
@@ -156,7 +142,8 @@ def pullStrava(token, rides):
             # store select fields from Strava
             # create geopoint field from start_latlng
             ride['strava'] = dict( ((sf, activity_dict[sf] ) for sf in stravaFields) )
-            ride['location'] = ride['strava']['start_date_local']
+            ride['location'] = ride['strava']['start_latlng']
+            ride['strava']['distance_mi'] = round(ride['strava']['distance'] / 1609, 2)
         
         updatedRides.append(ride)
             
@@ -170,8 +157,6 @@ def addWeather(apiKey, rides):
     
     weatherRides = []
     for ride in rides:
-        # 'start_latlng': [42.058653, -87.708136],
-
         lat, long = ride['strava']['start_latlng']
 
         dtStart = datetime.strptime(ride['strava']['start_date'], '%Y-%m-%dT%H:%M:%SZ')
@@ -184,9 +169,6 @@ def addWeather(apiKey, rides):
 
         response = requests.get(oneCall)
         weather = json.loads(response.text)
-        print()
-        print(weather)
-        print()
         try:
             weatherSpans = weather['hourly'][dtStart.hour : dtStart.hour + hoursSpan + 1]
             weatherStart = weatherSpans[0]
@@ -207,9 +189,17 @@ def addWeather(apiKey, rides):
 
 def esGetExisting(esConn, index):
     '''Get existing rides in ES'''
-    rides = es.search(index=index, body={"query": {"match_all": {}}})
 
-    existing = (row['_source']['startDateTime'] for row in rides['hits']['hits'])
+    print('starting esGetExisting')
+
+    search = {"size":10000,"query":{"match_all":{}},"fields":["strava_link","timestamp"],"_source":False}
+    rides = es.search(index=index, body=search)
+
+    existing = {'ts':[], 'sl':[]}
+    for row in rides['hits']['hits']:
+        existing['ts'].append(row['fields']['timestamp'][0])
+        existing['sl'].append(row['fields']['strava_link'][0])
+
     return existing
 
 
@@ -220,7 +210,7 @@ def esInsert(indexName, newRides):
     # TODO convert to bulk client at some point
     print('Indexing rows to index: %s' % indexName)
     for ride in newRides:
-        print(ride)
+#        print(ride)
         res = es.index(index=indexName, body=ride)
 
 def esConnect(cid, user, passwd):
@@ -230,24 +220,51 @@ def esConnect(cid, user, passwd):
     return es
 
 def dropExisting(existing, rides):
-    #TODO delete existing docs from sheet
-    # use strava.start_date
 
+    new = []
+    for ride in rides:
+        if ride['strava_link'] not in existing['sl']:
+            print('new ride found: %s' % ride['strava_link'])
+            new.append(ride)
+        
+    if not new:
+        print ('no new strava rides found. Exiting')
+        sys.exit()
     return rides
+
+def createMeta(rides):
+    ''' use data from weather but fall back to manual input for other data'''
+
+    print('starting createMeta')
+    weatherFallback = ( ('temp', 'starting_temp'), ('feels_like', 'real_feel'), ('wind_speed', 'wind_speed') )
+    compiledRides = []
+
+    for ride in rides:
+        meta = {}
+        for weatherField, fallback in weatherFallback:
+            try:
+                meta[weatherField] = ride['weather']['weatherStart'][weatherField]
+            except KeyError:
+                try:
+                    meta[weatherField] = ride[fallback]
+                except:
+                    pass
+        ride['meta'] = meta
+        compiledRides.append(ride)
+
+    return compiledRides
+
 
 if __name__ == '__main__':
     
-    # Set variables
+    # ES info
     es_id = os.getenv('es_id')
     es_user = os.getenv('es_user')
     es_pass = os.getenv('es_pass')
-    #indexName = 'cycling-report'
-    indexName = 'test_cycling-report'
+    indexName = 'cycling-report-extended'
 
     # OpenWeather info
     apiKey = os.getenv('apiKey')
-    lat = os.getenv('lat')
-    long = os.getenv('long')
 
     # strava info
     strava_client = os.getenv('stravaClientID')
@@ -273,7 +290,10 @@ if __name__ == '__main__':
     stravaAdded = pullStrava(token, newRides)
 
     # add All the Weather!
-    processedRides = addWeather(apiKey, stravaAdded)
+    weatherRides = addWeather(apiKey, stravaAdded)
+
+    # create metafields - if/else fields
+    processedRides = createMeta(weatherRides)
 
     # sent new rides to ESS
     esInsert(indexName, processedRides)
