@@ -1,0 +1,357 @@
+PUT _index_template/cycling-report
+{
+  "index_patterns": [
+    "cycling-report*"
+  ],
+  "template": {
+  "settings": {
+    "number_of_shards": 1
+  },
+  "mappings": {
+    "properties": {
+      "comfort_ending": {
+        "type": "keyword"
+      },
+      "comfort_notes": {
+        "type": "text"
+      },
+      "comfort_starting": {
+        "type": "keyword"
+      },
+      "data_files": {
+        "type": "keyword"
+      },
+      "date": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
+      },
+      "distance": {
+        "type": "float"
+      },
+      "during_ride_food": {
+        "type": "keyword"
+      },
+      "email_address": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
+      },
+      "ending_temp": {
+        "type": "long"
+      },
+      "food_feel": {
+        "type": "text"
+      },
+      "food_notes": {
+        "type": "text"
+      },
+      "food_quantities": {
+        "type": "text"
+      },
+      "gloves": {
+        "type": "keyword"
+      },
+      "go_powder": {
+        "type": "keyword"
+      },
+      "headneck_cover": {
+        "type": "keyword"
+      },
+      "jacket": {
+        "type": "keyword"
+      },
+      "legs": {
+        "type": "keyword"
+      },
+      "location": {
+        "type": "geo_point"
+      },
+      "post_ride_nutrition": {
+        "type": "keyword"
+      },
+      "pre-ride_food": {
+        "type": "keyword"
+      },
+      "precipitation": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
+      },
+      "real_feel": {
+        "type": "long"
+      },
+      "shirts": {
+        "type": "keyword"
+      },
+      "shoe_extra": {
+        "type": "keyword"
+      },
+      "shoes": {
+        "type": "keyword"
+      },
+      "socks": {
+        "type": "keyword"
+      },
+      "startDateTime": {
+        "type": "date"
+      },
+      "start_time": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
+      },
+      "starting_temp": {
+        "type": "long"
+      },
+      "strava": {
+        "properties": {
+          "average_speed": {
+            "type": "float"
+          },
+          "average_watts": {
+            "type": "float"
+          },
+          "calories": {
+            "type": "float"
+          },
+          "distance": {
+            "type": "float"
+          },
+          "distance_mi" : {
+            "type": "float"
+          },
+          "elapsed_time": {
+            "type": "long"
+          },
+          "elev_high": {
+            "type": "float"
+          },
+          "elev_low": {
+            "type": "float"
+          },
+          "kilojoules": {
+            "type": "float"
+          },
+          "max_speed": {
+            "type": "float"
+          },
+          "moving_time": {
+            "type": "long"
+          },
+          "name": {
+            "type": "text",
+            "fields": {
+              "keyword": {
+                "type": "keyword"
+              }
+            }
+          },
+          "start_date": {
+            "type": "date"
+          },
+          "start_date_local": {
+            "type": "date"
+          },
+          "start_latlng": {
+            "type": "float"
+          },
+          "timezone": {
+            "type": "keyword"
+          },
+          "total_elevation_gain": {
+            "type": "float"
+          }
+        }
+      },
+      "strava_link": {
+        "type": "keyword"
+      },
+      "timestamp": {
+        "type": "date",
+        "format": "MM/dd/yyyy HH:mm:ss||MM/dd/yyyy H:mm:ss||M/dd/yyyy HH:mm:ss||M/dd/yyyy H:mm:ss||MM/d/yyyy HH:mm:ss||MM/d/yyyy H:mm:ss||M/d/yyyy HH:mm:ss||M/d/yyyy H:mm:ss"
+      },
+      "water_bottle_contents": {
+        "type": "keyword"
+      },
+      "water_bottles": {
+        "type": "long"
+      },
+      "meta" : {
+        "properties": {
+          "temp": {
+            "type": "float"
+          },
+          "feels_like": {
+            "type": "float"
+          },
+          "wind_speed": {
+            "type": "float"
+          }
+        }
+      },
+      "weather": {
+        "properties": {
+          "location": {
+              "type": "geo_point"
+          },
+          "missingReason": {
+            "properties": {
+              "cod": {
+                "type": "text",
+                "fields": {
+                  "keyword": {
+                    "type": "keyword"
+                  }
+                }
+              },
+              "message": {
+                "type": "text",
+                "fields": {
+                  "keyword": {
+                    "type": "keyword"
+                  }
+                }
+              }
+            }
+          },
+          "timezone": {
+            "type": "keyword"
+          },
+          "timezone_offset": {
+            "type": "long"
+          },
+          "weatherSpans": {
+            "properties": {
+              "clouds": {
+                "type": "long"
+              },
+              "dew_point": {
+                "type": "float"
+              },
+              "dt": {
+                "type": "long"
+              },
+              "feels_like": {
+                "type": "float"
+              },
+              "humidity": {
+                "type": "long"
+              },
+              "pressure": {
+                "type": "long"
+              },
+              "temp": {
+                "type": "float"
+              },
+              "visibility": {
+                "type": "long"
+              },
+              "weather": {
+                "properties": {
+                  "description": {
+                    "type": "keyword"
+                  },
+                  "icon": {
+                    "type": "keyword"
+                  },
+                  "id": {
+                    "type": "long"
+                  },
+                  "main": {
+                    "type": "keyword"
+                  }
+                }
+              },
+              "wind_deg": {
+                "type": "long"
+              },
+              "wind_gust": {
+                "type": "float"
+              },
+              "wind_speed": {
+                "type": "float"
+              }
+            }
+          },
+          "weatherStart": {
+            "properties": {
+              "clouds": {
+                "type": "long"
+              },
+              "dew_point": {
+                "type": "float"
+              },
+              "dt": {
+                "type": "long"
+              },
+              "feels_like": {
+                "type": "float"
+              },
+              "humidity": {
+                "type": "long"
+              },
+              "pressure": {
+                "type": "long"
+              },
+              "temp": {
+                "type": "float"
+              },
+              "visibility": {
+                "type": "long"
+              },
+              "weather": {
+                "properties": {
+                  "description": {
+                    "type": "keyword"
+                  },
+                  "icon": {
+                    "type": "keyword"
+                  },
+                  "id": {
+                    "type": "long"
+                  },
+                  "main": {
+                    "type": "keyword"
+                  }
+                }
+              },
+              "wind_deg": {
+                "type": "long"
+              },
+              "wind_gust": {
+                "type": "float"
+              },
+              "wind_speed": {
+                "type": "float"
+              }
+            }
+          }
+        }
+      },
+      "wind_feel_first_half": {
+        "type": "keyword"
+      },
+      "wind_feel_second_half": {
+        "type": "keyword"
+      },
+      "wind_speed": {
+        "type": "long"
+      }
+    }
+  }
+}
+}
+
