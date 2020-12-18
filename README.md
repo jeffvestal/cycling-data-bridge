@@ -24,12 +24,21 @@ The goal of this project is to centralize objective and subjective cycling data.
 -- TODO link to pytohn libraries used
 - A bike ride
 
-### Python Libraries used
-- TODO list of main libraries used
-- [pip freeze output](https://raw.githubusercontent.com/jeffvestal/cycling-data-bridge/main/py_freeze.txt?token=AMWFQYHCRJMNSOZN5O2WU6K73TIGW "pip freeze output")
+### Python Libraries used (non-standard)
+[pip freeze output](https://raw.githubusercontent.com/jeffvestal/cycling-data-bridge/main/py_freeze.txt?token=AMWFQYHCRJMNSOZN5O2WU6K73TIGW "pip freeze output")
+- [elasticsearch](https://pypi.org/project/elasticsearch7/ "elasticsearch")
+- [gspread](https://pypi.org/project/gspread/ "gspread")
+- [stravaio](https://pypi.org/project/stravaio/ "stravaio")
+
 
 ### Environment Variables to configure
-- TODO a bunch
+- **es_id**= "elastic cloud_id"
+- **es_user**="elasticsearch user"
+- **es_pass**="es_user password"
+- **apiKey**="openWeather API key"
+- **stravaClientID**="Strava API App ID"
+- **stravaClientSecret**="Strava API App Client Secret"
+
 
 
 
