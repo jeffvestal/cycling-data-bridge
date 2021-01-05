@@ -245,7 +245,7 @@ def dropExisting(existing, rides):
         sys.exit()
 
     logging.info('Finished dropping existing rides')
-    return rides
+    return new
 
 def createMeta(rides):
     ''' use data from weather but fall back to manual input for other data'''
