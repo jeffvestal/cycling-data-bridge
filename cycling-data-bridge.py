@@ -8,7 +8,7 @@ from stravaio import StravaIO
 from datetime import datetime, timedelta
 from elasticsearch import Elasticsearch, helpers
 
-__version__ = 0.9.1
+__version__ = 0.91
 
 def getSheet():
     '''Pull ride entries from google sheet'''
