@@ -1,7 +1,7 @@
 # Cycling Data Bridge
 The goal of this project is to centralize objective and subjective cycling data.
 1. Nutrition, clothing, comfort feel, etc. are entered in a Google Form (subjective)
-2. Python script pulls that data as well as Strava and. Weather measurements (objective)
+2. Python script pulls that data as well as Strava (metrics and gps tracks) and Weather measurements (objective)
 3. Sends them to an Elasticsearch cluster for visulization and reference.
 
 [![Data Flow Diagram](https://github.com/jeffvestal/cycling-data-bridge/raw/main/cycling%20report%20Diagram.png "Data Flow Diagram")](https://github.com/jeffvestal/cycling-report/raw/main/cycling%20report%20Diagram.png "Data Flow Diagram")
