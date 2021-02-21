@@ -5,10 +5,10 @@ import requests
 import json
 import logging
 from stravaio import StravaIO
-from datetime import datetime
-from elasticsearch import Elasticsearch
+from datetime import datetime, timedelta
+from elasticsearch import Elasticsearch, helpers
 
-__version__ = 0.9
+__version__ = 0.9.1
 
 def getSheet():
     '''Pull ride entries from google sheet'''
@@ -107,12 +107,14 @@ def getStravaToken(client_id, client_secret, access_code=False):
     # TODO check for 200
 
 
-def pullStrava(token, rides):
+def pullStrava(token, rides, tracksIdx, callLimit):
     '''pull ride info from strava'''
 
     logging.info('Starting to pull ride info from Strava')
 
     updatedRides =[]
+    tracks = []
+
     stravaFields = [
         'average_speed', 
         'average_watts',
@@ -132,25 +134,68 @@ def pullStrava(token, rides):
         'timezone', 
         'total_elevation_gain'
     ]
+    #TODO ->  Want to include gear.name to get bike name
 
     client = StravaIO(access_token=token)
     
+    apiLoopCount = 0
     for ride in rides:
+        apiLoopCount += 1
+
+        # process activity
         rideID = ride['strava_link'].split('/')[-1]
+        logging.info('getting activity: %s' % rideID)
         activity = client.get_activity_by_id(rideID)
         activity_dict = activity.to_dict()
 
-        for sf in stravaFields:
-            # store select fields from Strava
-            # create geopoint field from start_latlng
-            ride['strava'] = dict( ((sf, activity_dict[sf] ) for sf in stravaFields) )
-            ride['location'] = ride['strava']['start_latlng']
-            ride['strava']['distance_mi'] = round(ride['strava']['distance'] / 1609, 2)
+        # store select fields from Strava
+        # create geopoint field from start_latlng
+        ride['strava'] = dict( ((sf, activity_dict[sf] ) for sf in stravaFields) )
+        ride['location'] = ride['strava']['start_latlng']
+        ride['strava']['distance_mi'] = round(ride['strava']['distance'] / 1609, 2)
         
         updatedRides.append(ride)
+
+
+        # Process Streams for ride
+        logging.info('getting stream: %s' % rideID)
+        streams = client.get_activity_streams(id=rideID, athlete_id=None, local=False)
+        streams_dict = streams.to_dict()
+        
+        ride_start = datetime.strptime(activity_dict['start_date'], '%Y-%m-%dT%H:%M:%SZ') # I also do this in addWeather, could potentially just do it once
+        for point, value in enumerate(streams_dict['time']):
+            # Create new Track for each point
+
+            # offset point from start of ride
+            point_dt = ride_start + timedelta(seconds=streams_dict['time'][point])
+            new_track = {
+                        'strava_link' : ride['strava_link'],
+                        '_index' : tracksIndexName,
+                        'point_ts' : point_dt
+                        }
+
+            # Add all stream metrics to new track dict
+            for key in streams_dict.keys():
+                new_track[key] = streams_dict[key][point]
+
+                # Create geo_point
+                new_track['location'] = {
+                                        'lat' : streams_dict['lat'][point], 
+                                        'lon' : streams_dict['lng'][point] 
+                                        }
+
+            tracks.append(new_track)
+
+        # Mark the end of the ride
+        tracks[-1]['track_end'] = True
+
+        if apiLoopCount >= callLimit :
+            logging.info('Ending Strava API calls early after reaching API CAll Limit (%s)' % callLimit)
+            break
+
             
     logging.info('Finsihed pulling rides from Strava')
-    return updatedRides
+    return updatedRides, tracks
 
 
 def addWeather(apiKey, rides):
@@ -196,6 +241,7 @@ def esGetExisting(esConn, index):
     logging.info('Starting to get list of existing rides in ES')
 
     search = {"size":10000,"query":{"match_all":{}},"fields":["strava_link","timestamp"],"_source":False}
+    #return [] # TMP TAKE OUT
     rides = es.search(index=index, body=search)
 
     existing = {'ts':[], 'sl':[]}
@@ -207,7 +253,7 @@ def esGetExisting(esConn, index):
     return existing
 
 
-def esInsert(indexName, newRides):
+def esInsert(indexName, newRides, newTracks):
     '''Insert new rides to ES'''
 
     logging.info('Starting to insert new rides to ES')
@@ -218,6 +264,13 @@ def esInsert(indexName, newRides):
         logging.info(res)
 
     logging.info('Finished inserting rides to ES')
+
+    logging.info('Starting inserting Track Streams to ES')
+    # need to 
+    # FIX MAPPING FOR TIME here, time and need to create a geo_point
+    helpers.bulk(es, newTracks)
+
+    logging.info('Finished inserting Track Streams to ES')
 
 def esConnect(cid, user, passwd):
     '''Connect to Elastic Cloud cluster'''
@@ -281,6 +334,7 @@ if __name__ == '__main__':
     es_user = os.getenv('es_user')
     es_pass = os.getenv('es_pass')
     indexName = 'cycling-report-extended'
+    tracksIndexName = 'cycling-tracks'
 
     # OpenWeather info
     apiKey = os.getenv('apiKey')
@@ -288,6 +342,7 @@ if __name__ == '__main__':
     # strava info
     strava_client = os.getenv('stravaClientID')
     strava_secret = os.getenv('stravaClientSecret')
+    strava_api_limit = 40
 
 
     # Get rides for Google Sheet
@@ -306,7 +361,7 @@ if __name__ == '__main__':
     token = getStravaToken(strava_client, strava_secret, access_code=False)
 
     # pull strava data for ride
-    stravaAdded = pullStrava(token, newRides)
+    stravaAdded, stravaTracks = pullStrava(token, newRides, tracksIndexName, strava_api_limit)
 
     # add All the Weather!
     weatherRides = addWeather(apiKey, stravaAdded)
@@ -315,7 +370,7 @@ if __name__ == '__main__':
     processedRides = createMeta(weatherRides)
 
     # sent new rides to ESS
-    esInsert(indexName, processedRides)
+    esInsert(indexName, processedRides, stravaTracks)
 
 
 
