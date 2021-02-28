@@ -111,8 +111,7 @@ def getIndoorRides(token):
     indoor = []
     client = StravaIO(access_token=token)
 
-    #after = 'Last Month'
-    after = 'Last Year'
+    after = 'Last Month'
     activityList = client.get_logged_in_athlete_activities(after=after)
     logging.debug(activityList)
 
