@@ -106,6 +106,25 @@ def getStravaToken(client_id, client_secret, access_code=False):
  
     # TODO check for 200
 
+def getIndoorRides(token):
+
+    indoor = []
+    client = StravaIO(access_token=token)
+
+    #after = 'Last Month'
+    after = 'Last Year'
+    activityList = client.get_logged_in_athlete_activities(after=after)
+    logging.debug(activityList)
+
+    for activity in activityList:
+        activity = activity.to_dict()
+
+        if activity['trainer'] and activity['type'] == 'Ride':
+            ride = {'strava_link' : 'https://www.strava.com/activities/%s' % activity['id'] }
+            indoor.append(ride)
+
+    return indoor
+    
 
 def pullStrava(token, rides, tracksIdx, callLimit):
     '''pull ride info from strava'''
@@ -116,13 +135,16 @@ def pullStrava(token, rides, tracksIdx, callLimit):
     tracks = []
 
     stravaFields = [
+        'average_cadence',
         'average_speed', 
         'average_watts',
         'calories',     
+        'device_name',
         'distance', 
         'elapsed_time', 
         'elev_high', 
         'elev_low', 
+        'gear',
         'kilojoules', 
         'max_speed', 
         'max_watts', 
@@ -131,6 +153,7 @@ def pullStrava(token, rides, tracksIdx, callLimit):
         'start_date', 
         'start_date_local', 
         'start_latlng', 
+        'trainer',
         'timezone', 
         'total_elevation_gain'
     ]
@@ -147,47 +170,65 @@ def pullStrava(token, rides, tracksIdx, callLimit):
         logging.info('getting activity: %s' % rideID)
         activity = client.get_activity_by_id(rideID)
         activity_dict = activity.to_dict()
+        logging.debug(activity_dict)
 
         # store select fields from Strava
-        # create geopoint field from start_latlng
-        ride['strava'] = dict( ((sf, activity_dict[sf] ) for sf in stravaFields) )
-        ride['location'] = ride['strava']['start_latlng']
-        ride['strava']['distance_mi'] = round(ride['strava']['distance'] / 1609, 2)
+        #ride['strava'] = dict( ((sf, activity_dict[sf] ) for sf in stravaFields) )
+        strava = {}
+        for sf in stravaFields:
+            logging.debug(sf)
+            try:
+                strava[sf] = activity_dict[sf]
+            except KeyError:
+                logging.debug(sf)
+                pass
+        ride['strava'] = strava
+        logging.debug(ride)
+
+        try:
+            ride['location'] = ride['strava']['start_latlng']
+        except KeyError:
+            pass
+
+        try:
+            ride['strava']['distance_mi'] = round(ride['strava']['distance'] / 1609, 2)
+        except KeyError:
+            print(ride)
+            ride['strava']['distance_mi'] = 0
         
         updatedRides.append(ride)
+        logging.debug(updatedRides)
 
 
-        # Process Streams for ride
-        logging.info('getting stream: %s' % rideID)
-        streams = client.get_activity_streams(id=rideID, athlete_id=None, local=False)
-        streams_dict = streams.to_dict()
-        
-        ride_start = datetime.strptime(activity_dict['start_date'], '%Y-%m-%dT%H:%M:%SZ') # I also do this in addWeather, could potentially just do it once
-        for point, value in enumerate(streams_dict['time']):
-            # Create new Track for each point
-
-            # offset point from start of ride
-            point_dt = ride_start + timedelta(seconds=streams_dict['time'][point])
-            new_track = {
-                        'strava_link' : ride['strava_link'],
-                        '_index' : tracksIndexName,
-                        'point_ts' : point_dt
-                        }
-
-            # Add all stream metrics to new track dict
-            for key in streams_dict.keys():
-                new_track[key] = streams_dict[key][point]
-
-                # Create geo_point
-                new_track['location'] = {
-                                        'lat' : streams_dict['lat'][point], 
-                                        'lon' : streams_dict['lng'][point] 
-                                        }
-
-            tracks.append(new_track)
-
-        # Mark the end of the ride
-        tracks[-1]['track_end'] = True
+        try:
+            if not ride['strava']['trainer']:
+                # Process Streams for ride - Indoor rides don't have gps tracks
+                logging.info('getting stream: %s' % rideID)
+                streams = client.get_activity_streams(id=rideID, athlete_id=None, local=False)
+                streams_dict = streams.to_dict()
+                
+                ride_start = datetime.strptime(activity_dict['start_date'], '%Y-%m-%dT%H:%M:%SZ') # I also do this in addWeather, could potentially just do it once
+                for point, value in enumerate(streams_dict['time']):
+                    # Create new Track for each point
+    
+                    # offset point from start of ride
+                    point_dt = ride_start + timedelta(seconds=streams_dict['time'][point])
+                    new_track = {
+                                'strava_link' : ride['strava_link'],
+                                '_index' : tracksIndexName,
+                                'point_ts' : point_dt
+                                }
+    
+                    # Add all stream metrics to new track dict
+                    for key in streams_dict.keys():
+                        new_track[key] = streams_dict[key][point]
+    
+                    tracks.append(new_track)
+    
+                # Mark the end of the ride
+                tracks[-1]['track_end'] = True
+        except KeyError:
+            pass
 
         if apiLoopCount >= callLimit :
             logging.info('Ending Strava API calls early after reaching API CAll Limit (%s)' % callLimit)
@@ -195,6 +236,8 @@ def pullStrava(token, rides, tracksIdx, callLimit):
 
             
     logging.info('Finsihed pulling rides from Strava')
+    logging.debug(updatedRides)
+    logging.debug(tracks)
     return updatedRides, tracks
 
 
@@ -202,36 +245,48 @@ def addWeather(apiKey, rides):
     '''Add weather from OpenWeather (API allows for last 5 days)'''
 
     logging.info('Starting to pull weather info')
+    logging.debug(rides)
     
     weatherRides = []
     for ride in rides:
-        lat, long = ride['strava']['start_latlng']
-
-        dtStart = datetime.strptime(ride['strava']['start_date'], '%Y-%m-%dT%H:%M:%SZ')
-        dt = int(dtStart.timestamp())
-        hoursSpan = int(ride['strava']['elapsed_time']/60/60) + 1 # lazy way to ensure we get weather for the span of hours ride went across
-
-        oneCall = 'http://api.openweathermap.org/data/2.5/onecall/timemachine?lat=%s&lon=%s&units=imperial&dt=%s&appid=%s' % (lat, long, dt, apiKey)
-        logging.info('Calling wather for %s' % oneCall)
-
-        response = requests.get(oneCall)
-        weather = json.loads(response.text)
         try:
-            weatherSpans = weather['hourly'][dtStart.hour : dtStart.hour + hoursSpan + 1]
-            weatherStart = weatherSpans[0]
+            if ride['strava']['trainer'] == True:
+                logging.info('skipping weather pull for %s' % ride)
+                weatherRides.append(ride)
+            else:
+                lat, long = ride['strava']['start_latlng']
 
-            ride['weather'] = {
-                                'weatherSpans' : weatherSpans, 
-                                'weatherStart' : weatherStart,
-                                'location' : {'lat' : weather['lat'], 'lon' : weather['lon'] },
-                                'timezone' : weather['timezone'],
-                                'timezone_offset' : weather['timezone_offset']
-                              }
+                dtStart = datetime.strptime(ride['strava']['start_date'], '%Y-%m-%dT%H:%M:%SZ')
+                dt = int(dtStart.timestamp())
+                hoursSpan = int(ride['strava']['elapsed_time']/60/60) + 1 # lazy way to ensure we get weather for the span of hours ride went across
+
+                oneCall = 'http://api.openweathermap.org/data/2.5/onecall/timemachine?lat=%s&lon=%s&units=imperial&dt=%s&appid=%s' % (lat, long, dt, apiKey)
+                logging.info('Calling wather for %s' % oneCall)
+
+                response = requests.get(oneCall)
+                weather = json.loads(response.text)
+                try:
+                    weatherSpans = weather['hourly'][dtStart.hour : dtStart.hour + hoursSpan + 1]
+                    weatherStart = weatherSpans[0]
+
+                    ride['weather'] = {
+                                        'weatherSpans' : weatherSpans, 
+                                        'weatherStart' : weatherStart,
+                                        'location' : {'lat' : weather['lat'], 'lon' : weather['lon'] },
+                                        'timezone' : weather['timezone'],
+                                        'timezone_offset' : weather['timezone_offset']
+                                      }
+                except KeyError:
+                    ride['weather'] = {'missingReason' : weather}
+                weatherRides.append(ride)
         except KeyError:
-            ride['weather'] = {'missingReason' : weather}
-        weatherRides.append(ride)
+            '''can't process weather info possibly because it is an indoor ride but not labeled as such (trainer)
+               or something is up with the weather info, eitherway still include it for upload'''
+
+            weatherRides.append(ride)
 
     logging.info('Finished pulling weather info')
+    logging.debug(weatherRides)
     return weatherRides
 
 
@@ -241,15 +296,14 @@ def esGetExisting(esConn, index):
     logging.info('Starting to get list of existing rides in ES')
 
     search = {"size":10000,"query":{"match_all":{}},"fields":["strava_link","timestamp"],"_source":False}
-    #return [] # TMP TAKE OUT
     rides = es.search(index=index, body=search)
 
     existing = {'ts':[], 'sl':[]}
     for row in rides['hits']['hits']:
-        existing['ts'].append(row['fields']['timestamp'][0])
         existing['sl'].append(row['fields']['strava_link'][0])
 
     logging.info('Finished getting existing rides from ES')
+    print(existing)
     return existing
 
 
@@ -260,6 +314,7 @@ def esInsert(indexName, newRides, newTracks):
     # TODO convert to bulk client at some point
     logging.info('Indexing rows to index: %s' % indexName)
     for ride in newRides:
+        logging.debug(ride)
         res = es.index(index=indexName, body=ride)
         logging.info(res)
 
@@ -281,19 +336,30 @@ def esConnect(cid, user, passwd):
     logging.info('Finished creating ES Connection')
     return es
 
-def dropExisting(existing, rides):
+def dropExisting(existing, rides, indoorRides):
     '''We only want to work with and insert new rides to ES'''
 
     logging.info('Starting to drop existing rides from google sheet')
+    print('indoor')
+    print(indoorRides)
 
+    logging.debug(indoorRides)
     new = []
+    ###TODO COmbine these two loops
     for ride in rides:
         if ride['strava_link'] not in existing['sl']:
             logging.info('New ride found: %s' % ride['strava_link'])
             new.append(ride)
+
+    for ride in indoorRides:
+        print(ride)
+        if ride['strava_link'] not in existing['sl']:
+            logging.info('New indoor ride found: %s' % ride['strava_link'])
+            new.append(ride)
         
     if not new:
-        logging.info('No new strava rides found in google sheet')
+        logging.info('No new strava rides found in google sheet or indoor on Strava')
+        #logging.info('No new strava rides found in google sheet')
         logging.info('Exiting')
         sys.exit()
 
@@ -321,6 +387,7 @@ def createMeta(rides):
         compiledRides.append(ride)
 
     logging.info('Finished creating meta weather fields')
+    logging.debug(compiledRides)
     return compiledRides
 
 
@@ -335,6 +402,8 @@ if __name__ == '__main__':
     es_pass = os.getenv('es_pass')
     indexName = 'cycling-report-extended'
     tracksIndexName = 'cycling-tracks'
+    #indexName = 'cycling-report-extended-indoor-test'
+    #tracksIndexName = 'cycling-tracks-indoor-test'
 
     # OpenWeather info
     apiKey = os.getenv('apiKey')
@@ -344,9 +413,16 @@ if __name__ == '__main__':
     strava_secret = os.getenv('stravaClientSecret')
     strava_api_limit = 40
 
+    # Do stuff
 
     # Get rides for Google Sheet
     sheet = getSheet()
+
+    # get strava token
+    token = getStravaToken(strava_client, strava_secret, access_code=False)
+
+    # Get indoor rides for past week
+    indoor = getIndoorRides(token)
 
     # connect to ESS
     es = esConnect(es_id, es_user, es_pass)
@@ -355,13 +431,11 @@ if __name__ == '__main__':
     existing = esGetExisting(es, indexName)
 
     # drop existing rides
-    newRides = dropExisting(existing, sheet)
-
-    # get strava token
-    token = getStravaToken(strava_client, strava_secret, access_code=False)
+    newRides = dropExisting(existing, sheet, indoor)
 
     # pull strava data for ride
     stravaAdded, stravaTracks = pullStrava(token, newRides, tracksIndexName, strava_api_limit)
+    logging.info(stravaAdded)
 
     # add All the Weather!
     weatherRides = addWeather(apiKey, stravaAdded)
