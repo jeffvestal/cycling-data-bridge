@@ -132,3 +132,4 @@ dmypy.json
 credentials.json
 *.json
 *ignore
+*.swp
