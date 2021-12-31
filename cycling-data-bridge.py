@@ -101,6 +101,7 @@ def getStravaToken(client_id, client_secret, access_code=False):
         json.dump(strava_tokens, outfile)
 
     logging.info('Finished getting Strava token')
+    logging.info(strava_tokens)
     return strava_tokens['access_token']
  
  
@@ -165,8 +166,12 @@ def pullStrava(token, rides, tracksIdx, callLimit):
         apiLoopCount += 1
 
         # process activity
-        rideID = ride['strava_link'].split('/')[-1]
+        rideID = ride['strava_link'].rstrip('/').split('/')[-1]
         logging.info('getting activity: %s' % rideID)
+        logging.info('rideID')
+        logging.info(rideID)
+        logging.info('strava_link')
+        logging.info(ride['strava_link'])
         activity = client.get_activity_by_id(rideID)
         activity_dict = activity.to_dict()
         logging.debug(activity_dict)
