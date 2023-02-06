@@ -7,8 +7,66 @@ import logging
 from stravaio import StravaIO
 from datetime import datetime, timedelta
 from elasticsearch import Elasticsearch, helpers
+from pprint import pprint
 
 __version__ = 0.91
+
+
+def remapFieldNames(key):
+    '''change field keys'''
+
+    inOut = {
+        'timestamp' : ' datetime.timestamp',
+        'post_ride_nutrition' : 'equipment.food.ride.post
+        'jacket' : 'clothing.jacket',
+        'legs' : 'clothing.legs',
+        'shirts' : 'clothing.shirts',
+        'gloves' : 'clothing.gloves',
+        'headneck_cover' : 'clothing.head_neck',
+        'shoes' : 'clothing.shoes',
+        'shoe_extra' : 'clothing.shoes.extra',
+        'socks' : 'clothing.socks',
+        'data_files' : 'data.file',
+        'date' : 'datetime.date.start',
+        'start_time' : 'datetime.time.start',
+        'comfort_ending' : 'environment.comfort.end',
+        'comfort_notes' : 'environment.comfort.notes',
+        'comfort_starting' : 'environment.comfort.temperature.start',
+        'wind_feel_first_half' : 'environment.comfort.wind.first_half',
+        'wind_feel_second_half' : 'environment.comfort.wind.second_half',
+        'precipitation' : 'environment.percipitation',
+        'real_feel' : 'environment.temperature.feel.start',
+        'ending_temp' : 'environment.temperature.real.end',
+        'starting_temp' : 'environment.temperature.real.start',
+        'wind_speed' : 'environment.wind.speed',
+        'water_bottle_contents' : 'equipment.bottle.contents',
+        'water_bottles' : 'equipment.bottle.count',
+        'during_ride_food' : 'equipment.food.ride.during',
+        'food_quantities' : 'equipment.food.during.quantity',
+        'food_feel' : 'equipment.food.feel',
+        'food_notes' : 'equipment.food.notes',
+        'pre-ride_food' : 'equipment.food.ride.pre',
+        'go_powder' : 'equpment.supplement.pre',
+        'distance' : 'stats.distance',
+        'strava_link' : 'strava.link',
+        'training_peaks_link' : 'training_peaks.link',
+        'email_address' : 'user.email', 
+        'calories' : 'stats.calories',
+        'kilojoules' : 'stats.kilojoules',
+        'max_speed' : 'stats.speed.max',
+        'max_watts' : 'stats.watts.max',
+        'trainer' : 'equipment.trainer',
+        'type' : 'stats.type',
+        'weighted_average_watts' : 'stats.watts.weighted_avg',
+        'workout_type' : 'stats.workout_type',
+        'total_elevation_gain' : 'stats.elevation.total.gain',
+    }
+
+    try:
+        return inOut[key]
+    except KeyError:
+        logging.info('No Mapping found for %s' % key)
+        return key
 
 def getSheet():
     '''Pull ride entries from google sheet'''
@@ -16,33 +74,40 @@ def getSheet():
 
     # "checkbox" fields should be converted to an array for ingesting in ES
     checkboxToArray = ['during_ride_food', 'gloves', 'go_powder', 'headneck_cover', 'jacket', 'legs', 'pre-ride_food', 'shirts', 'shoe_extra', 'socks']
-
+    
 
     # Connect to google
     gc = gspread.service_account()
     logging.info('connected to google api')
-
+    
     # Open and load spreadsheet
     sh = gc.open('Cycling Clothes for Weather').sheet1
     l = sh.get_all_records()
 
     convertedSheet = []
     for row in l:
+
         # Replace chars that would make ES a little less fun
         rowLower = {}
         for k,v in row.items():
-            if v == '':
-                # No need to index empty cells
-                continue
+            #if v == '':
+            #    # No need to index empty cells
+            #    continue
 
             # make fields names friendlier for es/lucene
+            k_ori = k
             k = k.lower().replace('/', '').replace('  ', '').replace('(', '').replace(')', '').strip().replace(' ', '_')
 
             # convert multiple results to array
             if k in checkboxToArray:
                 v = v.split(',')
 
-            rowLower[k] = v
+            #remap keys
+            newKey = remapFieldNames(k)
+
+
+            rowLower[newKey] = v
+
 
         convertedSheet.append(rowLower)
 
@@ -54,13 +119,13 @@ def getStravaToken(client_id, client_secret, access_code=False):
     # need to have valid access_code from oAuth
 
     logging.info('Starting to get Strava Token')
-
+    
     url = 'https://www.strava.com/oauth/token'
     payload = {
         'client_id': client_id,
         'client_secret': client_secret
      }
-
+ 
     if access_code:
        '''
          You have to manually (for now) call oAuth to get the access token
@@ -69,34 +134,33 @@ def getStravaToken(client_id, client_secret, access_code=False):
         #assume we need to pull a new initial token
        payload['code'] = access_code
        payload['grant_type'] = 'authorization_code'
-
+ 
        response = requests.post(
            url = url,
            data = payload
        )
-
+ 
     #    # store token data
     #    strava_tokens = response.json()
     #    with open('.strava_tokens.json', 'w') as outfile:
     #        json.dump(strava_tokens, outfile)
-
+ 
     else:
         try:
             with open('.strava_tokens.json') as file:
                 tokenData = json.load(file)
         except Exception as e:
             logging.info(e)
-
+    
         payload['refresh_token'] = tokenData['refresh_token']
         payload['grant_type'] = 'refresh_token'
-
+ 
         response = requests.post(
             url = url,
             data = payload
         )
-
+ 
     # store token data
-    print(response)
     strava_tokens = response.json()
     with open('.strava_tokens.json', 'w') as outfile:
         json.dump(strava_tokens, outfile)
@@ -104,8 +168,8 @@ def getStravaToken(client_id, client_secret, access_code=False):
     logging.info('Finished getting Strava token')
     logging.info(strava_tokens)
     return strava_tokens['access_token']
-
-
+ 
+ 
     # TODO check for 200
 
 def getIndoorRides(token):
@@ -125,7 +189,7 @@ def getIndoorRides(token):
             indoor.append(ride)
 
     return indoor
-
+    
 
 def pullStrava(token, rides, tracksIdx, callLimit):
     '''pull ride info from strava'''
@@ -135,33 +199,32 @@ def pullStrava(token, rides, tracksIdx, callLimit):
     updatedRides =[]
     tracks = []
 
-    stravaFields = [
-        'average_cadence',
-        'average_speed',
-        'average_watts',
-        'calories',
-        'device_name',
-        'distance',
-        'elapsed_time',
-        'elev_high',
-        'elev_low',
-        'gear',
-        'kilojoules',
-        'max_speed',
-        'max_watts',
-        'moving_time',
-        'name',
-        'start_date',
-        'start_date_local',
-        'start_latlng',
-        'trainer',
-        'timezone',
-        'total_elevation_gain'
-    ]
-    #TODO ->  Want to include gear.name to get bike name
+    stravaFields = {
+        'average_cadence' : 'stats.cadence.avg',
+        'average_speed' : 'stats.speed.avg', 
+        'average_watts' : 'stats.watts.avg',
+        'calories' : 'stats.calories',     
+        'device_name' : 'equipment.device.name',
+        'distance' : 'stats.distance', 
+        'elapsed_time' : 'datetime.time.elapsed', 
+        'elev_high' : 'stats.elevation.high', 
+        'elev_low' : 'stats.elevation.log', 
+        'gear' : 'stats.gear',
+        'kilojoules' : 'stats.kilojoules', 
+        'max_speed' : 'stats.speed.max', 
+        'max_watts' : 'stats.watts.max', 
+        'moving_time' : 'stats.time.moving', 
+        'name' : 'sats.name', 
+        'start_date' : 'datetime.date.start', 
+        'start_date_local' : 'datetime.date.local', 
+        'start_latlng' : 'stats.latlng.start', 
+        'trainer' : 'stats.trainer',
+        'timezone' : 'datetime.timezone', 
+        'total_elevation_gain' : 'stats.elevation.gain.total'
+    }
 
     client = StravaIO(access_token=token)
-
+    
     apiLoopCount = 0
     for ride in rides:
         apiLoopCount += 1
@@ -178,15 +241,20 @@ def pullStrava(token, rides, tracksIdx, callLimit):
         logging.debug(activity_dict)
 
         # store select fields from Strava
-        #ride['strava'] = dict( ((sf, activity_dict[sf] ) for sf in stravaFields) )
         strava = {}
-        for sf in stravaFields:
+        for sf, newField in stravaFields.items():
             logging.debug(sf)
             try:
-                strava[sf] = activity_dict[sf]
+                fieldValue = activity_dict[sf]
             except KeyError:
                 logging.debug(sf)
                 pass
+
+            # Store Remapped Strava Field and value
+            strava[newField] = fieldValue
+
+        pprint(strava)
+        1/0
         ride['strava'] = strava
         logging.debug(ride)
 
@@ -200,7 +268,7 @@ def pullStrava(token, rides, tracksIdx, callLimit):
         except KeyError:
             print(ride)
             ride['strava']['distance_mi'] = 0
-
+        
         updatedRides.append(ride)
         logging.debug(updatedRides)
 
@@ -211,11 +279,11 @@ def pullStrava(token, rides, tracksIdx, callLimit):
                 logging.info('getting stream: %s' % rideID)
                 streams = client.get_activity_streams(id=rideID, athlete_id=None, local=False)
                 streams_dict = streams.to_dict()
-
+                
                 ride_start = datetime.strptime(activity_dict['start_date'], '%Y-%m-%dT%H:%M:%SZ') # I also do this in addWeather, could potentially just do it once
                 for point, value in enumerate(streams_dict['time']):
                     # Create new Track for each point
-
+    
                     # offset point from start of ride
                     point_dt = ride_start + timedelta(seconds=streams_dict['time'][point])
                     new_track = {
@@ -223,13 +291,13 @@ def pullStrava(token, rides, tracksIdx, callLimit):
                                 '_index' : tracksIndexName,
                                 'point_ts' : point_dt
                                 }
-
+    
                     # Add all stream metrics to new track dict
                     for key in streams_dict.keys():
                         new_track[key] = streams_dict[key][point]
-
+    
                     tracks.append(new_track)
-
+    
                 # Mark the end of the ride
                 tracks[-1]['track_end'] = True
         except KeyError:
@@ -239,7 +307,7 @@ def pullStrava(token, rides, tracksIdx, callLimit):
             logging.info('Ending Strava API calls early after reaching API CAll Limit (%s)' % callLimit)
             break
 
-
+            
     logging.info('Finsihed pulling rides from Strava')
     logging.debug(updatedRides)
     logging.debug(tracks)
@@ -251,7 +319,7 @@ def addWeather(apiKey, rides):
 
     logging.info('Starting to pull weather info')
     logging.debug(rides)
-
+    
     weatherRides = []
     for ride in rides:
         try:
@@ -275,7 +343,7 @@ def addWeather(apiKey, rides):
                     weatherStart = weatherSpans[0]
 
                     ride['weather'] = {
-                                        'weatherSpans' : weatherSpans,
+                                        'weatherSpans' : weatherSpans, 
                                         'weatherStart' : weatherStart,
                                         'location' : {'lat' : weather['lat'], 'lon' : weather['lon'] },
                                         'timezone' : weather['timezone'],
@@ -326,7 +394,7 @@ def esInsert(indexName, newRides, newTracks):
     logging.info('Finished inserting rides to ES')
 
     logging.info('Starting inserting Track Streams to ES')
-    # need to
+    # need to 
     # FIX MAPPING FOR TIME here, time and need to create a geo_point
     helpers.bulk(es, newTracks)
 
@@ -361,7 +429,7 @@ def dropExisting(existing, rides, indoorRides):
         if ride['strava_link'] not in existing['sl']:
             logging.info('New indoor ride found: %s' % ride['strava_link'])
             new.append(ride)
-
+        
     if not new:
         logging.info('No new strava rides found in google sheet or indoor on Strava')
         #logging.info('No new strava rides found in google sheet')
@@ -397,7 +465,7 @@ def createMeta(rides):
 
 
 if __name__ == '__main__':
-
+    
     logging.basicConfig(format='%(asctime)s:%(levelname)s:%(module)s:%(funcName)s:%(lineno)d:%(message)s', level=logging.INFO)
     logging.info('Starting up')
 
